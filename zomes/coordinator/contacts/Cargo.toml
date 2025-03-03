@@ -13,3 +13,4 @@ hdk = { workspace = true }
 serde = { workspace = true }
 
 contacts_integrity = { path = "../../integrity/contacts", package = "contacts_integrity" }
+linked_devices_types = { git = "https://github.com/darksoil-studio/linked-devices-zome", branch = "main-0.4" }
