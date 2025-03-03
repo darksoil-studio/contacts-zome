@@ -1,7 +1,11 @@
 use contacts_integrity::*;
 use hdk::prelude::*;
+use std::collections::BTreeMap;
 
-use crate::{linked_devices::query_all_my_agents, profile::query_my_profile};
+use crate::{
+    linked_devices::query_all_my_agents,
+    private_contacts_entry::query_undeleted_private_contacts_entries, profile::query_my_profile,
+};
 
 fn build_my_contact() -> ExternResult<Option<Contact>> {
     let Some(my_profile) = query_my_profile(())? else {
@@ -24,16 +28,13 @@ pub fn send_share_contact_request(peer_contact: Contact) -> ExternResult<()> {
 }
 
 #[hdk_extern]
-pub fn query_incoming_share_contact_requests() -> ExternResult<BTreeMap<ActionHashB64, Profile>> {
+pub fn query_incoming_share_contact_requests() -> ExternResult<BTreeMap<ActionHashB64, Contact>> {
     let entries = query_undeleted_private_contacts_entries()?;
     let incoming_share_contact_requests_entries = entries
         .into_iter()
         .filter_map(|(action_hash, entry)| match entry {
-            PrivateContactsEntry::IncomingContactRequest(incoming_share_contact_requests) => {
-                Some((
-                    ActionHashB64::from(action_hash),
-                    incoming_share_contact_requests,
-                ))
+            PrivateContactsEntry::IncomingContactRequest(contact) => {
+                Some((ActionHashB64::from(action_hash), contact))
             }
             _ => None,
         })
@@ -42,16 +43,13 @@ pub fn query_incoming_share_contact_requests() -> ExternResult<BTreeMap<ActionHa
 }
 
 #[hdk_extern]
-pub fn query_outgoing_share_contact_requests() -> ExternResult<()> {
+pub fn query_outgoing_share_contact_requests() -> ExternResult<BTreeMap<ActionHashB64, Contact>> {
     let entries = query_undeleted_private_contacts_entries()?;
     let outgoing_share_contact_requests_entries = entries
         .into_iter()
         .filter_map(|(action_hash, entry)| match entry {
-            PrivateContactsEntry::OutgoingContactRequest(outgoing_share_contact_requests) => {
-                Some((
-                    ActionHashB64::from(action_hash),
-                    outgoing_share_contact_requests,
-                ))
+            PrivateContactsEntry::OutgoingContactRequest(contact) => {
+                Some((ActionHashB64::from(action_hash), contact))
             }
             _ => None,
         })
@@ -65,7 +63,7 @@ pub fn accept_share_contact_request(
 ) -> ExternResult<()> {
     let entries = query_undeleted_private_contacts_entries()?;
 
-    let Some(private_contacts_entry) = entries.get(incoming_share_contact_request) else {
+    let Some(private_contacts_entry) = entries.get(&incoming_share_contact_request) else {
         return Err(wasm_error!("IncomingShareContactRequest not found."));
     };
     let PrivateContactsEntry::IncomingContactRequest(contact) = private_contacts_entry else {
@@ -75,7 +73,7 @@ pub fn accept_share_contact_request(
     };
 
     create_entry(EntryTypes::PrivateContactsEntry(
-        PrivateContactsEntry::AddContact(contact),
+        PrivateContactsEntry::AddContact(contact.clone()),
     ))?;
     delete_entry(incoming_share_contact_request)?;
     Ok(())
