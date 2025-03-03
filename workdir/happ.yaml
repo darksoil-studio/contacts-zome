@@ -1,0 +1,17 @@
+---
+manifest_version: "1"
+name: contacts_test
+description: ~
+roles:   
+  - name: contacts_test
+    provisioning:
+      strategy: create
+      deferred: false
+    dna:
+      bundled: "./contacts_test.dna"
+      modifiers:
+        network_seed: ~
+        properties: ~
+        origin_time: ~
+      version: ~
+      clone_limit: 0
