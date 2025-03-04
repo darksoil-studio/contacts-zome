@@ -23,13 +23,18 @@ pub enum ContactsEvent {
     ContactAdded(Contact),
     ContactUpdated(Contact),
     ContactRemoved(Vec<AgentPubKey>),
-    OutgoingShareContactRequest(Contact),
-    IncomingShareContactRequest(Contact),
+    ShareContactRequest { from: Contact, to: Contact },
+    AcceptShareContactRequest(EntryHash),
+    RejectShareContactRequest(EntryHash),
+    CancelShareContactRequest(EntryHash),
 }
 
 impl PrivateEvent for ContactsEvent {
     fn validate(&self) -> ExternResult<ValidateCallbackResult> {
         Ok(ValidateCallbackResult::Valid)
+    }
+    fn recipients(&self) -> ExternResult<Vec<AgentPubKey>> {
+        Ok(vec![])
     }
 }
 

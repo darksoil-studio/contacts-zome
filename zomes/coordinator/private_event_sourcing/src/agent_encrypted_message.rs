@@ -15,12 +15,13 @@ pub struct EncryptedMessageBytes(XSalsa20Poly1305EncryptedData);
 
 pub fn create_encrypted_message(
     recipient: AgentPubKey,
-    message: SerializedBytes,
+    entry: PrivateEventEntry,
 ) -> ExternResult<()> {
+    let entry_bytes = SerializedBytes::try_from(entry).map_err(|err| wasm_error!(err))?;
     let encrypted_data = ed_25519_x_salsa20_poly1305_encrypt(
         agent_info()?.agent_latest_pubkey,
         recipient.clone(),
-        message.bytes().clone().into(),
+        entry_bytes.bytes().clone().into(),
     )?;
 
     let bytes = SerializedBytes::try_from(EncryptedMessageBytes(encrypted_data))
@@ -105,18 +106,14 @@ pub fn commit_my_pending_encrypted_messages<T: PrivateEvent>() -> ExternResult<(
         let decrypted_bytes = decrypted_data.as_ref().to_vec();
         let decrypted_serialized_bytes = SerializedBytes::from(UnsafeBytes::from(decrypted_bytes));
 
-        let Ok(private_event_entry) = PrivateEventEntry::try_from(decrypted_serialized_bytes)
-        else {
-            // Not a PrivateEventEntry message
-            continue;
-        };
-
-        let private_event_entry_hash = hash_entry(&private_event_entry)?;
-        if !private_events_entries.contains_key(&private_event_entry_hash.into()) {
-            if let Err(err) =
-                receive_private_event_from_linked_device::<T>(link.author, private_event_entry)
-            {
-                error!("Failed to receive private event from an encrypted message: {err:?}.")
+        if let Ok(private_event_entry) = PrivateEventEntry::try_from(decrypted_serialized_bytes) {
+            let private_event_entry_hash = hash_entry(&private_event_entry)?;
+            if !private_events_entries.contains_key(&private_event_entry_hash.into()) {
+                if let Err(err) =
+                    receive_private_event_from_linked_device::<T>(link.author, private_event_entry)
+                {
+                    error!("Failed to receive private event from an encrypted message: {err:?}.")
+                }
             }
         }
 

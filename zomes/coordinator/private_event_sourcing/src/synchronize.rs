@@ -68,11 +68,7 @@ pub fn synchronize_with_linked_devices() -> ExternResult<()> {
                 vec![agent.clone()],
             )?;
 
-            let bytes: SerializedBytes = private_event_entry
-                .try_into()
-                .map_err(|err| wasm_error!("Failed to serialize private event: {err:?}."))?;
-
-            create_encrypted_message(agent.clone(), bytes)?;
+            create_encrypted_message(agent.clone(), private_event_entry)?;
         }
     }
 

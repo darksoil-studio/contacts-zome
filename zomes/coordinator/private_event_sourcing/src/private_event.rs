@@ -9,6 +9,9 @@ use crate::{
 
 pub trait PrivateEvent: TryFrom<SerializedBytes> + TryInto<SerializedBytes> {
     fn validate(&self) -> ExternResult<ValidateCallbackResult>;
+
+    /// The agents other than the linked devices for the author that are suposed to receive this entry
+    fn recipients(&self) -> ExternResult<Vec<AgentPubKey>>;
 }
 
 pub fn create_private_event<T: PrivateEvent>(event: T) -> ExternResult<EntryHash> {
@@ -110,14 +113,26 @@ pub fn receive_private_events_from_linked_device<T: PrivateEvent>(
     Ok(())
 }
 
-pub fn post_commit_private_event<T: PrivateEvent>(private_event: T) -> ExternResult<()> {
+pub fn post_commit_private_event<T: PrivateEvent>(
+    private_event_entry: PrivateEventEntry,
+) -> ExternResult<()> {
+    let my_pub_key = agent_info()?.agent_latest_pubkey;
+
+    // We are not the author, do nothing
+    if private_event_entry.author.ne(&my_pub_key) {
+        return Ok(());
+    }
+
     let my_linked_devices = query_my_linked_devices()?;
+
+    let private_event = T::try_from(private_event_entry.event.event.clone())
+        .map_err(|err| wasm_error!("Failed to deserialize private event: {err:?}."))?;
+
+    let recipients = private_event.recipients()?;
 
     let bytes: SerializedBytes = private_event
         .try_into()
         .map_err(|err| wasm_error!("Failed to serialize private event: {err:?}."))?;
-
-    let private_event_entry = PrivateEventEntry(bytes);
 
     send_remote_signal(
         SerializedBytes::try_from(PrivateEventSourcingRemoteSignal::NewPrivateEvent(
@@ -127,9 +142,21 @@ pub fn post_commit_private_event<T: PrivateEvent>(private_event: T) -> ExternRes
         my_linked_devices.clone(),
     )?;
 
-    let bytes = SerializedBytes::try_from(private_event_entry).map_err(|err| wasm_error!(err))?;
     for linked_device in my_linked_devices {
-        create_encrypted_message(linked_device, bytes.clone())?;
+        create_encrypted_message(linked_device, private_event_entry.clone())?;
+    }
+
+    // Send to recipients
+
+    send_remote_signal(
+        SerializedBytes::try_from(PrivateEventSourcingRemoteSignal::NewPrivateEvent(
+            private_event_entry.clone(),
+        ))
+        .map_err(|err| wasm_error!(err))?,
+        recipients.clone(),
+    )?;
+    for recipient in recipients {
+        create_encrypted_message(recipient, private_event_entry.clone())?;
     }
 
     Ok(())
