@@ -1,7 +1,10 @@
-use contacts_integrity::{Contact, EncryptedMessage, EntryTypes, LinkTypes};
+use contacts_integrity::{Contact, EncryptedMessage, EntryTypes, LinkTypes, Profile};
 use hdk::prelude::*;
 
-use crate::utils::{create_link_relaxed, create_relaxed};
+use crate::{
+    utils::{create_link_relaxed, create_relaxed},
+    ContactsRemoteSignal,
+};
 
 #[derive(Serialize, Deserialize, Debug, SerializedBytes)]
 pub struct EncryptedMessageBytes(XSalsa20Poly1305EncryptedData);
@@ -26,10 +29,15 @@ pub enum ContactsEncryptedMessage {
     MessageBetweenLinkedDevices(MessageBetweenLinkedDevices),
 }
 
-pub fn create_encrypted_message(
+fn create_encrypted_message(
     recipient: AgentPubKey,
     message: ContactsEncryptedMessage,
 ) -> ExternResult<()> {
+    send_remote_signal(
+        ContactsRemoteSignal::NewPrivateContactsEntry(message.clone()),
+        agents,
+    )?;
+
     let message_bytes = SerializedBytes::try_from(message).map_err(|err| wasm_error!(err))?;
     let encrypted_data = ed_25519_x_salsa20_poly1305_encrypt(
         agent_info()?.agent_latest_pubkey,

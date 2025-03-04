@@ -133,9 +133,8 @@ checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 name = "contacts"
 version = "0.0.1"
 dependencies = [
- "contacts_integrity",
  "hdk",
- "linked_devices_types",
+ "private_event_sourcing",
  "serde",
 ]
 
@@ -750,6 +749,24 @@ name = "pin-utils"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
+
+[[package]]
+name = "private_event_sourcing"
+version = "0.0.1"
+dependencies = [
+ "hdk",
+ "linked_devices_types",
+ "private_event_sourcing_integrity",
+ "serde",
+]
+
+[[package]]
+name = "private_event_sourcing_integrity"
+version = "0.0.1"
+dependencies = [
+ "hdi",
+ "serde",
+]
 
 [[package]]
 name = "proc-macro-error"

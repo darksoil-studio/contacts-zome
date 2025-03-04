@@ -1,5 +1,5 @@
-use contacts_integrity::*;
 use hdk::prelude::*;
+use private_event_sourcing_integrity::*;
 
 pub fn create_relaxed(entry_type: EntryTypes) -> ExternResult<()> {
     HDK.with(|h| {

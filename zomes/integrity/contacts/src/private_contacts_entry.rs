@@ -2,12 +2,11 @@ use std::collections::BTreeMap;
 
 use hdi::prelude::*;
 
-pub type Profile = BTreeMap<String, String>;
-
-#[derive(Clone)]
-pub struct ShareContactRequest {
-    pub agents: Vec<AgentPubKeyB64>,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Profile {
     pub name: String,
+    pub avatar: Option<String>,
+    pub custom_fields: BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -1,17 +1,18 @@
 use std::collections::BTreeMap;
 
 use hdk::prelude::*;
-use private_event_sourcing::*;
+pub use private_event_sourcing_integrity::*;
 
 mod agent_encrypted_message;
-mod all_contacts;
+pub use agent_encrypted_message::{commit_my_pending_encrypted_messages, create_encrypted_message};
+mod linked_devices;
 mod private_event;
-mod profile;
-mod share_contact_request;
+pub use private_event::*;
 mod synchronize;
+pub use synchronize::synchronize_with_linked_devices;
+mod utils;
 
-#[hdk_extern]
-pub fn init(_: ()) -> ExternResult<InitCallbackResult> {
+pub fn init() -> ExternResult<InitCallbackResult> {
     let mut fns: BTreeSet<GrantedFunction> = BTreeSet::new();
     fns.insert((zome_info()?.name, FunctionName::from("recv_remote_signal")));
     let functions = GrantedFunctions::Listed(fns);
@@ -54,22 +55,23 @@ pub enum Signal {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub enum ContactsRemoteSignal {
-    // PeerChatTypingIndicator { peer_chat_hash: EntryHash },
-    // GroupChatTypingIndicator { group_chat_hash: EntryHash },
-    // SynchronizeEntriesWithLinkedDevice(BTreeMap<EntryHashB64, PrivateMessengerEntry>),
-    // SynchronizeGroupEntriesWithNewGroupMember(BTreeMap<EntryHashB64, PrivateMessengerEntry>),
+#[derive(Serialize, Deserialize, Debug, SerializedBytes)]
+pub enum PrivateEventSourcingRemoteSignal {
+    NewPrivateEvent(PrivateEventEntry),
+    SynchronizeEntriesWithLinkedDevice(BTreeMap<EntryHashB64, PrivateEventEntry>),
 }
 
-#[hdk_extern]
-pub fn recv_remote_signal(signal_bytes: SerializedBytes) -> ExternResult<()> {
-    if let Ok(private_event_sourcing_remote_signal) =
-        PrivateEventSourcingRemoteSignal::try_from(signal_bytes)?
-    {
-        recv_private_events_remote_signal(private_event_sourcing_remote_signal)
-    } else {
-        Ok(())
+pub fn recv_private_events_remote_signal<T: PrivateEvent>(
+    signal: PrivateEventSourcingRemoteSignal,
+) -> ExternResult<()> {
+    let provenance = call_info()?.provenance;
+    match signal {
+        PrivateEventSourcingRemoteSignal::NewPrivateEvent(private_event_entry) => {
+            receive_private_event_from_linked_device::<T>(provenance, private_event_entry)
+        }
+        PrivateEventSourcingRemoteSignal::SynchronizeEntriesWithLinkedDevice(
+            private_event_entries,
+        ) => receive_private_events_from_linked_device::<T>(provenance, private_event_entries),
     }
 }
 
@@ -125,8 +127,17 @@ fn signal_action(action: SignedActionHashed) -> ExternResult<()> {
                     app_entry: app_entry.clone(),
                 })?;
                 match app_entry {
-                    EntryTypes::PrivateContactsEntry(entry) => {
-                        // TODO: update my other devices and all my contacts, if necessary
+                    EntryTypes::PrivateEvent(entry) => {
+                        let result = call_remote(
+                            agent_info()?.agent_latest_pubkey,
+                            zome_info()?.name,
+                            "post_commit_private_event".into(),
+                            None,
+                            entry,
+                        )?;
+                        let ZomeCallResponse::Ok(_) = result else {
+                            return Err(wasm_error!("Error calling 'post_commit_private_event'"));
+                        };
                     }
                     _ => {}
                 };
