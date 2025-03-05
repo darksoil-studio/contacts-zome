@@ -1,7 +1,4 @@
-use std::collections::BTreeMap;
-
 use hdk::prelude::*;
-use linked_devices_types::{AgentToLinkedDevicesLinkTag, LinkedDevicesProof};
 use serde::de::DeserializeOwned;
 
 pub fn call_local_zome<P, R>(
@@ -39,38 +36,26 @@ pub fn linked_devices_zome_name() -> Option<ZomeName> {
     }
 }
 
-pub fn get_linked_devices_for(
-    agent: AgentPubKey,
-) -> ExternResult<BTreeMap<AgentPubKey, Vec<LinkedDevicesProof>>> {
+pub fn get_linked_devices_for(agent: AgentPubKey) -> ExternResult<Vec<AgentPubKey>> {
     let Some(zome_name) = linked_devices_zome_name() else {
-        return Ok(BTreeMap::new());
+        return Ok(Vec::new());
     };
     let links: Vec<Link> =
         call_local_zome(zome_name, "get_linked_devices_for_agent".into(), agent)?;
-    let mut linked_devices: BTreeMap<AgentPubKey, Vec<LinkedDevicesProof>> = BTreeMap::new();
 
-    for link in links {
-        let Some(agent) = link.target.into_agent_pub_key() else {
-            continue;
-        };
-
-        let tag_bytes = SerializedBytes::from(UnsafeBytes::from(link.tag.into_inner()));
-
-        let Ok(tag) = AgentToLinkedDevicesLinkTag::try_from(tag_bytes) else {
-            continue;
-        };
-
-        linked_devices.insert(agent, tag.0);
-    }
+    let linked_devices: Vec<AgentPubKey> = links
+        .into_iter()
+        .filter_map(|link| link.target.into_agent_pub_key())
+        .collect();
 
     Ok(linked_devices)
 }
 
-// pub fn get_all_agents_for(agent: AgentPubKey) -> ExternResult<Vec<AgentPubKey>> {
-//     let mut agents = get_linked_devices(agent.clone())?;
-//     agents.push(agent);
-//     Ok(agents)
-// }
+pub fn get_all_agents_for(agent: AgentPubKey) -> ExternResult<Vec<AgentPubKey>> {
+    let mut agents = get_linked_devices_for(agent.clone())?;
+    agents.push(agent);
+    Ok(agents)
+}
 
 pub fn query_all_my_agents() -> ExternResult<Vec<AgentPubKey>> {
     let mut agents = query_my_linked_devices()?;

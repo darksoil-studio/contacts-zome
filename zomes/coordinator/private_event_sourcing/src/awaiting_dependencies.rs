@@ -4,7 +4,8 @@ use hdk::prelude::*;
 use private_event_sourcing_integrity::*;
 
 use crate::{
-    query_private_event_entries, utils::create_relaxed, validate_private_event_entry, PrivateEvent,
+    internal_create_private_event, query_private_event_entries, validate_private_event_entry,
+    PrivateEvent,
 };
 
 pub fn attempt_commit_awaiting_deps_entries<T: PrivateEvent>() -> ExternResult<()> {
@@ -14,20 +15,18 @@ pub fn attempt_commit_awaiting_deps_entries<T: PrivateEvent>() -> ExternResult<(
     entries.sort_by(|e1, e2| e1.1 .0.event.timestamp.cmp(&e2.1 .0.event.timestamp));
 
     let private_messenger_entries = query_private_event_entries(())?;
-    for (_action_hash, private_messenger_entry) in entries {
-        let entry_hash = hash_entry(&private_messenger_entry)?;
+    for (_action_hash, private_event_entry) in entries {
+        let entry_hash = hash_entry(&private_event_entry)?;
 
         if !private_messenger_entries.contains_key(&entry_hash.clone().into()) {
-            let valid = validate_private_event_entry::<T>(&private_messenger_entry)?;
+            let valid = validate_private_event_entry::<T>(&private_event_entry)?;
 
             match valid {
                 ValidateCallbackResult::Valid => {
-                    create_relaxed(EntryTypes::PrivateEvent(private_messenger_entry.clone()))?;
-                    // post_receive_entry(private_messenger_entry)?;
+                    internal_create_private_event::<T>(private_event_entry, true)?;
                 }
                 ValidateCallbackResult::Invalid(reason) => {
                     error!("Invalid awaiting dependencies entry: {reason}");
-                    // delete_relaxed(action_hash)?;
                 }
                 ValidateCallbackResult::UnresolvedDependencies(_) => {}
             }

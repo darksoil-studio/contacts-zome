@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     agent_encrypted_message::create_encrypted_message, linked_devices::query_my_linked_devices,
-    utils::create_relaxed, PrivateEventSourcingRemoteSignal,
+    utils::create_relaxed, PrivateEventSourcingRemoteSignal, Signal,
 };
 
 pub trait PrivateEvent: TryFrom<SerializedBytes> + TryInto<SerializedBytes> {
@@ -45,7 +45,7 @@ pub fn create_private_event<T: PrivateEvent>(private_event: T) -> ExternResult<E
     let entry = build_private_event_entry(private_event)?;
     let entry_hash = hash_entry(&entry)?;
 
-    create_entry(EntryTypes::PrivateEvent(entry))?;
+    internal_create_private_event::<T>(entry, false)?;
 
     Ok(entry_hash)
 }
@@ -93,7 +93,7 @@ pub fn receive_private_event_from_linked_device<T: PrivateEvent>(
     match outcome {
         ValidateCallbackResult::Valid => {
             info!("Received a PrivateEvent from a linked device.");
-            create_relaxed(EntryTypes::PrivateEvent(private_event_entry))?;
+            internal_create_private_event::<T>(private_event_entry, true)?;
         }
         ValidateCallbackResult::UnresolvedDependencies(unresolved_dependencies) => {
             create_relaxed(EntryTypes::AwaitingDependencies(AwaitingDependencies {
@@ -132,7 +132,7 @@ pub fn receive_private_events_from_linked_device<T: PrivateEvent>(
         match outcome {
             ValidateCallbackResult::Valid => {
                 info!("Received a PrivateEvent from a linked device.");
-                create_relaxed(EntryTypes::PrivateEvent(private_event_entry))?;
+                internal_create_private_event::<T>(private_event_entry, true)?;
             }
             ValidateCallbackResult::UnresolvedDependencies(unresolved_dependencies) => {
                 create_relaxed(EntryTypes::AwaitingDependencies(AwaitingDependencies {
@@ -148,7 +148,29 @@ pub fn receive_private_events_from_linked_device<T: PrivateEvent>(
     Ok(())
 }
 
-pub fn post_commit_private_event<T: PrivateEvent>(
+pub(crate) fn internal_create_private_event<T: PrivateEvent>(
+    private_event_entry: PrivateEventEntry,
+    relaxed: bool,
+) -> ExternResult<()> {
+    let app_entry = EntryTypes::PrivateEvent(private_event_entry.clone());
+    let action_hash = match relaxed {
+        true => create_relaxed(app_entry.clone())?,
+        false => create_entry(app_entry.clone())?,
+    };
+    let Some(record) = get(action_hash, GetOptions::local())? else {
+        return Err(wasm_error!(
+            "Unreachable: could not get the record that was just created."
+        ));
+    };
+    emit_signal(Signal::EntryCreated {
+        action: record.signed_action,
+        app_entry: app_entry.clone(),
+    })?;
+    send_private_event_to_linked_devices_and_recipients::<T>(private_event_entry)?;
+    Ok(())
+}
+
+pub fn send_private_event_to_linked_devices_and_recipients<T: PrivateEvent>(
     private_event_entry: PrivateEventEntry,
 ) -> ExternResult<()> {
     let my_pub_key = agent_info()?.agent_latest_pubkey;

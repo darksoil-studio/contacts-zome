@@ -125,22 +125,8 @@ fn signal_action(action: SignedActionHashed) -> ExternResult<()> {
         }
         Action::Create(_create) => {
             if let Ok(Some(app_entry)) = get_entry_for_action(&action.hashed.hash) {
-                emit_signal(Signal::EntryCreated {
-                    action: action.clone(),
-                    app_entry: app_entry.clone(),
-                })?;
                 match app_entry {
                     EntryTypes::PrivateEvent(entry) => {
-                        let result = call_remote(
-                            agent_info()?.agent_latest_pubkey,
-                            zome_info()?.name,
-                            "post_commit_private_event".into(),
-                            None,
-                            entry,
-                        )?;
-                        let ZomeCallResponse::Ok(_) = result else {
-                            return Err(wasm_error!("Error calling 'post_commit_private_event'"));
-                        };
                         // TODO: change this to only be called once per all actions
                         let result = call_remote(
                             agent_info()?.agent_latest_pubkey,

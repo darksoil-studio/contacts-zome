@@ -45,6 +45,9 @@ impl PrivateEvent for ContactsEvent {
         Ok(ValidateCallbackResult::Valid)
     }
     fn recipients(&self) -> ExternResult<Vec<AgentPubKey>> {
+        // match self {
+        //     ContactsEvent::SetMyProfile()
+        // }
         Ok(vec![])
     }
 }
