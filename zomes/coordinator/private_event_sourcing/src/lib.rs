@@ -5,7 +5,10 @@ pub use private_event_sourcing_integrity::*;
 
 mod agent_encrypted_message;
 pub use agent_encrypted_message::{commit_my_pending_encrypted_messages, create_encrypted_message};
+mod awaiting_dependencies;
+pub use awaiting_dependencies::attempt_commit_awaiting_deps_entries;
 mod linked_devices;
+pub use linked_devices::*;
 mod private_event;
 pub use private_event::*;
 mod synchronize;
@@ -134,6 +137,17 @@ fn signal_action(action: SignedActionHashed) -> ExternResult<()> {
                             "post_commit_private_event".into(),
                             None,
                             entry,
+                        )?;
+                        let ZomeCallResponse::Ok(_) = result else {
+                            return Err(wasm_error!("Error calling 'post_commit_private_event'"));
+                        };
+                        // TODO: change this to only be called once per all actions
+                        let result = call_remote(
+                            agent_info()?.agent_latest_pubkey,
+                            zome_info()?.name,
+                            "attempt_commit_awaiting_deps_entries".into(),
+                            None,
+                            (),
                         )?;
                         let ZomeCallResponse::Ok(_) = result else {
                             return Err(wasm_error!("Error calling 'post_commit_private_event'"));

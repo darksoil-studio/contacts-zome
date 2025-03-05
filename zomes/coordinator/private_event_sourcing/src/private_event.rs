@@ -8,14 +8,33 @@ use crate::{
 };
 
 pub trait PrivateEvent: TryFrom<SerializedBytes> + TryInto<SerializedBytes> {
+    /// Whether the given entry is to be accepted in to our source chain
     fn validate(&self) -> ExternResult<ValidateCallbackResult>;
 
     /// The agents other than the linked devices for the author that are suposed to receive this entry
     fn recipients(&self) -> ExternResult<Vec<AgentPubKey>>;
 }
 
-pub fn create_private_event<T: PrivateEvent>(event: T) -> ExternResult<EntryHash> {
-    let validation_outcome = event.validate()?;
+fn build_private_event_entry<T: PrivateEvent>(private_event: T) -> ExternResult<PrivateEventEntry> {
+    let bytes: SerializedBytes = private_event
+        .try_into()
+        .map_err(|err| wasm_error!("Failed to serialize private event: {err:?}"))?;
+
+    let signed: SignedContent<SerializedBytes> = SignedContent {
+        content: bytes,
+        timestamp: sys_time()?,
+    };
+    let my_pub_key = agent_info()?.agent_latest_pubkey;
+    let signature = sign(my_pub_key.clone(), &signed)?;
+    Ok(PrivateEventEntry(SignedEvent {
+        author: my_pub_key,
+        signature,
+        event: signed,
+    }))
+}
+
+pub fn create_private_event<T: PrivateEvent>(private_event: T) -> ExternResult<EntryHash> {
+    let validation_outcome = private_event.validate()?;
 
     let ValidateCallbackResult::Valid = validation_outcome else {
         return Err(wasm_error!(
@@ -23,10 +42,7 @@ pub fn create_private_event<T: PrivateEvent>(event: T) -> ExternResult<EntryHash
         ));
     };
 
-    let bytes: SerializedBytes = event
-        .try_into()
-        .map_err(|err| wasm_error!("Failed to serialize private event: {err:?}"))?;
-    let entry = PrivateEventEntry(bytes);
+    let entry = build_private_event_entry(private_event)?;
     let entry_hash = hash_entry(&entry)?;
 
     create_entry(EntryTypes::PrivateEvent(entry))?;
@@ -43,6 +59,27 @@ fn check_is_linked_device(agent: AgentPubKey) -> ExternResult<()> {
     }
 }
 
+pub fn validate_private_event_entry<T: PrivateEvent>(
+    private_event_entry: &PrivateEventEntry,
+) -> ExternResult<ValidateCallbackResult> {
+    let valid = verify_signature(
+        private_event_entry.0.author.clone(),
+        private_event_entry.0.signature.clone(),
+        &private_event_entry.0.event,
+    )?;
+
+    if !valid {
+        return Ok(ValidateCallbackResult::Invalid(String::from(
+            "Invalid private event entry: invalid signature.",
+        )));
+    }
+
+    let private_event = T::try_from(private_event_entry.0.event.content.clone())
+        .map_err(|err| wasm_error!("Failed to deserialize the private event: {err:?}."))?;
+
+    private_event.validate()
+}
+
 pub fn receive_private_event_from_linked_device<T: PrivateEvent>(
     provenance: AgentPubKey,
     private_event_entry: PrivateEventEntry,
@@ -51,22 +88,16 @@ pub fn receive_private_event_from_linked_device<T: PrivateEvent>(
 
     check_is_linked_device(provenance)?;
 
-    let private_event = T::try_from(private_event_entry.0)
-        .map_err(|err| wasm_error!("Failed to deserialize the private event: {err:?}."))?;
-    let outcome = private_event.validate()?;
+    let outcome = validate_private_event_entry::<T>(&private_event_entry)?;
 
-    let bytes: SerializedBytes = private_event
-        .try_into()
-        .map_err(|err| wasm_error!("Failed to serialize private event: {err:?}."))?;
-    let entry = PrivateEventEntry(bytes);
     match outcome {
         ValidateCallbackResult::Valid => {
             info!("Received a PrivateEvent from a linked device.");
-            create_relaxed(EntryTypes::PrivateEvent(entry))?;
+            create_relaxed(EntryTypes::PrivateEvent(private_event_entry))?;
         }
         ValidateCallbackResult::UnresolvedDependencies(unresolved_dependencies) => {
             create_relaxed(EntryTypes::AwaitingDependencies(AwaitingDependencies {
-                event: entry,
+                event: private_event_entry,
                 unresolved_dependencies,
             }))?;
         }
@@ -84,15 +115,19 @@ pub fn receive_private_events_from_linked_device<T: PrivateEvent>(
     check_is_linked_device(provenance)?;
     let my_private_event_entries = query_private_event_entries(())?;
 
-    for (entry_hash, private_event_entry) in private_event_entries {
+    let mut ordered_their_private_messenger_entries: Vec<(EntryHashB64, PrivateEventEntry)> =
+        private_event_entries.into_iter().collect();
+
+    ordered_their_private_messenger_entries
+        .sort_by(|e1, e2| e1.1 .0.event.timestamp.cmp(&e2.1 .0.event.timestamp));
+
+    for (entry_hash, private_event_entry) in ordered_their_private_messenger_entries {
         if my_private_event_entries.contains_key(&entry_hash) {
             // We already have this message committed
             continue;
         }
-        let bytes = private_event_entry.0.clone();
-        let private_event = T::try_from(bytes)
-            .map_err(|err| wasm_error!("Failed to deserialize private event: {err:?}."))?;
-        let outcome = private_event.validate()?;
+
+        let outcome = validate_private_event_entry::<T>(&private_event_entry)?;
 
         match outcome {
             ValidateCallbackResult::Valid => {
@@ -119,20 +154,16 @@ pub fn post_commit_private_event<T: PrivateEvent>(
     let my_pub_key = agent_info()?.agent_latest_pubkey;
 
     // We are not the author, do nothing
-    if private_event_entry.author.ne(&my_pub_key) {
+    if private_event_entry.0.author.ne(&my_pub_key) {
         return Ok(());
     }
 
     let my_linked_devices = query_my_linked_devices()?;
 
-    let private_event = T::try_from(private_event_entry.event.event.clone())
+    let private_event = T::try_from(private_event_entry.0.event.content.clone())
         .map_err(|err| wasm_error!("Failed to deserialize private event: {err:?}."))?;
 
     let recipients = private_event.recipients()?;
-
-    let bytes: SerializedBytes = private_event
-        .try_into()
-        .map_err(|err| wasm_error!("Failed to serialize private event: {err:?}."))?;
 
     send_remote_signal(
         SerializedBytes::try_from(PrivateEventSourcingRemoteSignal::NewPrivateEvent(
@@ -162,12 +193,17 @@ pub fn post_commit_private_event<T: PrivateEvent>(
     Ok(())
 }
 
-pub fn query_private_events<T: PrivateEvent>() -> ExternResult<BTreeMap<EntryHashB64, T>> {
+pub fn query_private_events<T: PrivateEvent>(
+) -> ExternResult<BTreeMap<EntryHashB64, SignedEvent<T>>> {
     let private_events_entries = query_private_event_entries(())?;
 
     let private_events = private_events_entries
         .into_iter()
-        .filter_map(|(entry_hash, entry)| T::try_from(entry.0).ok().map(|e| (entry_hash, e)))
+        .filter_map(|(entry_hash, entry)| {
+            private_event_entry_to_signed_event(entry)
+                .ok()
+                .map(|e| (entry_hash, e))
+        })
         .collect();
 
     Ok(private_events)
@@ -209,12 +245,27 @@ pub fn query_private_event_entry(event_hash: EntryHash) -> ExternResult<Option<P
     Ok(Some(entry))
 }
 
-pub fn query_private_event<T: PrivateEvent>(event_hash: EntryHash) -> ExternResult<Option<T>> {
+fn private_event_entry_to_signed_event<T: PrivateEvent>(
+    private_event_entry: PrivateEventEntry,
+) -> ExternResult<SignedEvent<T>> {
+    let private_event = T::try_from(private_event_entry.0.event.content)
+        .map_err(|err| wasm_error!("Failed to deserialize private event: {err:?}."))?;
+    Ok(SignedEvent {
+        author: private_event_entry.0.author,
+        signature: private_event_entry.0.signature,
+        event: SignedContent {
+            timestamp: private_event_entry.0.event.timestamp,
+            content: private_event,
+        },
+    })
+}
+
+pub fn query_private_event<T: PrivateEvent>(
+    event_hash: EntryHash,
+) -> ExternResult<Option<SignedEvent<T>>> {
     let Some(private_event_entry) = query_private_event_entry(event_hash)? else {
         return Ok(None);
     };
-
-    let private_event = T::try_from(private_event_entry.0)
-        .map_err(|err| wasm_error!("Failed to deserialize private event: {err:?}."))?;
-    Ok(Some(private_event))
+    let signed_event = private_event_entry_to_signed_event(private_event_entry)?;
+    Ok(Some(signed_event))
 }

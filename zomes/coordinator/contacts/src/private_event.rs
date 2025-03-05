@@ -19,14 +19,25 @@ pub struct Contact {
 #[derive(Serialize, Deserialize, Debug, Clone, SerializedBytes)]
 #[serde(tag = "type")]
 pub enum ContactsEvent {
+    /// Profile
     SetMyProfile(Profile),
-    ContactAdded(Contact),
-    ContactUpdated(Contact),
-    ContactRemoved(Vec<AgentPubKey>),
-    ShareContactRequest { from: Contact, to: Contact },
+    /// Share Contact Request
+    ShareContactRequest {
+        from: Contact,
+        to: Contact,
+    },
     AcceptShareContactRequest(EntryHash),
     RejectShareContactRequest(EntryHash),
     CancelShareContactRequest(EntryHash),
+    /// Contacts
+    ContactAdded(Contact),
+    ContactUpdated {
+        contact_added_hash: EntryHash,
+        new_contact: Contact,
+    },
+    ContactRemoved {
+        contact_added_hash: EntryHash,
+    },
 }
 
 impl PrivateEvent for ContactsEvent {
@@ -38,15 +49,20 @@ impl PrivateEvent for ContactsEvent {
     }
 }
 
-pub fn query_contacts_events() -> ExternResult<BTreeMap<EntryHashB64, ContactsEvent>> {
+pub fn query_contacts_events() -> ExternResult<BTreeMap<EntryHashB64, SignedEvent<ContactsEvent>>> {
     query_private_events()
 }
 
 #[hdk_extern]
 pub fn post_commit_private_event(private_event_entry: PrivateEventEntry) -> ExternResult<()> {
-    let private_event =
-        ContactsEvent::try_from(private_event_entry.0).map_err(|err| wasm_error!(err))?;
-    private_event_sourcing::post_commit_private_event::<ContactsEvent>(private_event)?;
+    private_event_sourcing::post_commit_private_event::<ContactsEvent>(private_event_entry)?;
+
+    Ok(())
+}
+
+#[hdk_extern]
+pub fn attempt_commit_awaiting_deps_entries() -> ExternResult<()> {
+    private_event_sourcing::attempt_commit_awaiting_deps_entries::<ContactsEvent>()?;
 
     Ok(())
 }
